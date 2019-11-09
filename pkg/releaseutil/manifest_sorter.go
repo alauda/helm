@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
+	"k8s.io/klog"
 	"sigs.k8s.io/yaml"
 
 	"helm.sh/helm/pkg/chartutil"
@@ -63,6 +64,7 @@ var events = map[string]release.HookEvent{
 	release.HookTest.String():         release.HookTest,
 	// Support test-success for backward compatibility with Helm 2 tests
 	"test-success": release.HookTest,
+	"crd-install":         release.HookCRDInstall,
 }
 
 // SortManifests takes a map of filename/YAML contents, splits the file
@@ -130,7 +132,9 @@ func (file *manifestFile) sort(result *result) error {
 		}
 
 		if entry.Version != "" && !file.apis.Has(entry.Version) {
-			return errors.Errorf("apiVersion %q in %s is not available", entry.Version, file.path)
+			err := errors.Errorf("apiVersion %q in %s is not available", entry.Version, file.path)
+			klog.Warning("apiVersion not found when parse yaml, may be a crd, skip for now:", err)
+			//return errors.Errorf("apiVersion %q in %s is not available", entry.Version, file.path)
 		}
 
 		if !hasAnyAnnotation(entry) {

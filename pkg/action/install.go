@@ -244,6 +244,11 @@ func (i *Install) Run(chrt *chart.Chart, vals map[string]interface{}) (*release.
 
 	// pre-install hooks
 	if !i.DisableHooks {
+
+		if err := i.cfg.execHook(rel, release.HookCRDInstall, i.Timeout); err != nil {
+			return i.failRelease(rel, fmt.Errorf("failed crd-install: %s", err))
+		}
+
 		if err := i.cfg.execHook(rel, release.HookPreInstall, i.Timeout); err != nil {
 			return i.failRelease(rel, fmt.Errorf("failed pre-install: %s", err))
 		}
