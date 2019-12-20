@@ -215,10 +215,7 @@ func (i *Install) Run(chrt *chart.Chart, vals map[string]interface{}) (*release.
 	// Mark this release as in-progress
 	rel.SetStatus(release.StatusPendingInstall, "Initial install underway")
 
-	resources, err := i.cfg.KubeClient.Build(bytes.NewBufferString(rel.Manifest))
-	if err != nil {
-		return nil, errors.Wrap(err, "unable to build kubernetes objects from release manifest")
-	}
+
 
 	// Bail out here if it is a dry run
 	if i.DryRun {
@@ -253,6 +250,13 @@ func (i *Install) Run(chrt *chart.Chart, vals map[string]interface{}) (*release.
 			return i.failRelease(rel, fmt.Errorf("failed pre-install: %s", err))
 		}
 	}
+
+	// this was moved after hook
+	resources, err := i.cfg.KubeClient.Build(bytes.NewBufferString(rel.Manifest))
+	if err != nil {
+		return nil, errors.Wrap(err, "unable to build kubernetes objects from release manifest")
+	}
+
 
 	// At this point, we can do the install. Note that before we were detecting whether to
 	// do an update, but it's not clear whether we WANT to do an update if the re-use is set
