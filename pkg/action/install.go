@@ -30,7 +30,10 @@ import (
 	"github.com/Masterminds/sprig"
 	"github.com/pkg/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	serializer_yaml "k8s.io/apimachinery/pkg/runtime/serializer/yaml"
 	"k8s.io/cli-runtime/pkg/resource"
+	"sigs.k8s.io/yaml"
 
 	"helm.sh/helm/pkg/chart"
 	"helm.sh/helm/pkg/chartutil"
@@ -215,8 +218,6 @@ func (i *Install) Run(chrt *chart.Chart, vals map[string]interface{}) (*release.
 	// Mark this release as in-progress
 	rel.SetStatus(release.StatusPendingInstall, "Initial install underway")
 
-
-
 	// Bail out here if it is a dry run
 	if i.DryRun {
 		rel.Info.Description = "Dry run complete"
@@ -257,7 +258,6 @@ func (i *Install) Run(chrt *chart.Chart, vals map[string]interface{}) (*release.
 		// return nil, errors.Wrap(err, "unable to build kubernetes objects from release manifest")
 		return i.failRelease(rel, fmt.Errorf("unable to build kubernetes objects from release manifest: %s", err))
 	}
-
 
 	// At this point, we can do the install. Note that before we were detecting whether to
 	// do an update, but it's not clear whether we WANT to do an update if the re-use is set
@@ -339,7 +339,7 @@ func (i *Install) availableName() error {
 	releaseutil.Reverse(h, releaseutil.SortByRevision)
 	rel := h[0]
 
-	if st := rel.Info.Status; i.Replace && (st == release.StatusUninstalled || st == release.StatusFailed || st == release.StatusSuperseded ) {
+	if st := rel.Info.Status; i.Replace && (st == release.StatusUninstalled || st == release.StatusFailed || st == release.StatusSuperseded) {
 		return nil
 	}
 	return errors.New("cannot re-use a name that is still in use")
@@ -433,6 +433,9 @@ func (c *Configuration) renderResources(ch *chart.Chart, values chartutil.Values
 		}
 	}
 
+	// Inject annotations to files by Extra field of chart
+	injectAnnotationsByExtra(ch.Extra, files)
+
 	// Sort hooks, manifests, and partials. Only hooks and manifests are returned,
 	// as partials are not used after renderer.Render. Empty manifests are also
 	// removed here.
@@ -467,6 +470,74 @@ func (c *Configuration) renderResources(ch *chart.Chart, values chartutil.Values
 	}
 
 	return hs, b, notes, nil
+}
+
+// extendResources will inject annotations to files by Extra field of chart
+func injectAnnotationsByExtra(extra map[string]interface{}, files map[string]string) {
+	splitSep := "---\n"
+	for name, content := range files {
+		if strings.TrimSpace(content) == "" {
+			continue
+		}
+
+		playloads := strings.Split(strings.TrimSpace(content), splitSep)
+		fmt.Printf("======  playloads len %d\n", len(playloads))
+
+		newContents := make([]string, 0)
+		for _, playload := range playloads {
+			if strings.TrimSpace(playload) == "" {
+				continue
+			}
+
+			obj := &unstructured.Unstructured{}
+			fmt.Printf("====== playload %s\n", playload)
+
+			// decode YAML/JSON into unstructured.Unstructured
+			dec := serializer_yaml.NewDecodingSerializer(unstructured.UnstructuredJSONScheme)
+			_, _, err := dec.Decode([]byte(strings.TrimSpace(playload)), nil, obj)
+			if err != nil {
+				fmt.Printf("======== err\n", err.Error())
+				newContents = append(newContents, playload)
+				continue
+			}
+
+			annotations := obj.GetAnnotations()
+			if annotations == nil {
+				annotations = make(map[string]string)
+			}
+
+			// Hard code , read value from extra's key: inject-annotations
+			cur := make(map[string]string)
+			if item, exist := extra["inject-annotations"]; exist {
+				var ok bool
+				cur, ok = item.(map[string]string)
+				if !ok {
+					fmt.Printf("failed to convert item to map[string]bool, %+v", item)
+					newContents = append(newContents, playload)
+					continue
+				}
+			}
+
+			// cur := map[string]string{"cpaas.io/creator": "user"}
+			for k, v := range cur {
+				if _, exist := annotations[k]; !exist {
+					annotations[k] = v
+				}
+			}
+			obj.SetAnnotations(annotations)
+
+			b, err := yaml.Marshal(obj)
+			if err != nil {
+				fmt.Printf("======== err\n", err.Error())
+				newContents = append(newContents, playload)
+				continue
+			}
+
+			newContents = append(newContents, string(b))
+		}
+
+		files[name] = strings.Join(newContents, splitSep)
+	}
 }
 
 // write the <data> to <output-dir>/<name>. <append> controls if the file is created or content will be appended
