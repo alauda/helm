@@ -434,7 +434,7 @@ func (c *Configuration) renderResources(ch *chart.Chart, values chartutil.Values
 	}
 
 	// Inject annotations to files by Extra field of chart
-	injectAnnotationsByExtra(ch.Extra, files)
+	c.injectAnnotationsByExtra(ch.Extra, files)
 
 	// Sort hooks, manifests, and partials. Only hooks and manifests are returned,
 	// as partials are not used after renderer.Render. Empty manifests are also
@@ -472,17 +472,15 @@ func (c *Configuration) renderResources(ch *chart.Chart, values chartutil.Values
 	return hs, b, notes, nil
 }
 
-// extendResources will inject annotations to files by Extra field of chart
-func injectAnnotationsByExtra(extra map[string]interface{}, files map[string]string) {
-	splitSep := "---\n"
+// injectAnnotationsByExtra will inject annotations to files
+func (c *Configuration) injectAnnotationsByExtra(extra map[string]interface{}, files map[string]string) {
+	splitSep := "\n---\n"
 	for name, content := range files {
 		if strings.TrimSpace(content) == "" {
 			continue
 		}
 
 		playloads := strings.Split(strings.TrimSpace(content), splitSep)
-		fmt.Printf("======  playloads len %d\n", len(playloads))
-
 		newContents := make([]string, 0)
 		for _, playload := range playloads {
 			if strings.TrimSpace(playload) == "" {
@@ -490,13 +488,11 @@ func injectAnnotationsByExtra(extra map[string]interface{}, files map[string]str
 			}
 
 			obj := &unstructured.Unstructured{}
-			fmt.Printf("====== playload %s\n", playload)
-
 			// decode YAML/JSON into unstructured.Unstructured
 			dec := serializer_yaml.NewDecodingSerializer(unstructured.UnstructuredJSONScheme)
 			_, _, err := dec.Decode([]byte(strings.TrimSpace(playload)), nil, obj)
 			if err != nil {
-				fmt.Printf("======== err\n", err.Error())
+				c.Log("Decode yaml err %s", err.Error())
 				newContents = append(newContents, playload)
 				continue
 			}
@@ -512,15 +508,15 @@ func injectAnnotationsByExtra(extra map[string]interface{}, files map[string]str
 				var ok bool
 				cur, ok = item.(map[string]string)
 				if !ok {
-					fmt.Printf("failed to convert item to map[string]bool, %+v", item)
+					c.Log("Convert extra item %+v to map[string]string err %s", item, err.Error())
 					newContents = append(newContents, playload)
 					continue
 				}
 			}
 
-			// cur := map[string]string{"cpaas.io/creator": "user"}
 			for k, v := range cur {
 				if _, exist := annotations[k]; !exist {
+					c.Log("Inject %s=%s to obj annotations, obj kind: %s, obj name: %s", k, v, obj.GroupVersionKind(), obj.GetName())
 					annotations[k] = v
 				}
 			}
@@ -528,7 +524,7 @@ func injectAnnotationsByExtra(extra map[string]interface{}, files map[string]str
 
 			b, err := yaml.Marshal(obj)
 			if err != nil {
-				fmt.Printf("======== err\n", err.Error())
+				c.Log("Yaml Marshal err %s", err.Error())
 				newContents = append(newContents, playload)
 				continue
 			}
