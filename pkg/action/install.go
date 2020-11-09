@@ -18,6 +18,7 @@ package action
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -433,8 +434,8 @@ func (c *Configuration) renderResources(ch *chart.Chart, values chartutil.Values
 		}
 	}
 
-	// Inject annotations to files by Extra field of chart
-	c.injectAnnotationsByExtra(ch.Extra, files)
+	// Inject annotations to files by Metadata.Annotations field of chart
+	c.injectAnnotations(ch.Metadata.Annotations, files)
 
 	// Sort hooks, manifests, and partials. Only hooks and manifests are returned,
 	// as partials are not used after renderer.Render. Empty manifests are also
@@ -472,22 +473,24 @@ func (c *Configuration) renderResources(ch *chart.Chart, values chartutil.Values
 	return hs, b, notes, nil
 }
 
-// injectAnnotationsByExtra will inject annotations to files
-func (c *Configuration) injectAnnotationsByExtra(extra map[string]interface{}, files map[string]string) {
-	if extra == nil {
+// injectAnnotations will inject annotations to files
+func (c *Configuration) injectAnnotations(originalAnnotations map[string]string, files map[string]string) {
+	if originalAnnotations == nil {
 		return
 	}
 
-	// Hard code , read value from extra's key: inject-annotations
+	// Hard code , read value from originalAnnotations's key: inject-annotations
 	cur := make(map[string]string)
-	if item, exist := extra["inject-annotations"]; exist {
-		var ok bool
-		cur, ok = item.(map[string]string)
-		if !ok {
+	if item, exist := originalAnnotations["inject-annotations"]; exist {
+		if err := json.Unmarshal([]byte(item), &cur); err != nil {
 			c.Log("Convert extra item %+v to map[string]string err", item)
 			return
 		}
 	} else {
+		return
+	}
+
+	if len(cur) == 0 {
 		return
 	}
 

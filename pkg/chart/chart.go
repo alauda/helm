@@ -42,9 +42,6 @@ type Chart struct {
 
 	parent       *Chart
 	dependencies []*Chart
-
-	// Extra is some extended information
-	Extra map[string]interface{}
 }
 
 // SetDependencies replaces the chart dependencies.
