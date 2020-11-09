@@ -474,6 +474,23 @@ func (c *Configuration) renderResources(ch *chart.Chart, values chartutil.Values
 
 // injectAnnotationsByExtra will inject annotations to files
 func (c *Configuration) injectAnnotationsByExtra(extra map[string]interface{}, files map[string]string) {
+	if extra == nil {
+		return
+	}
+
+	// Hard code , read value from extra's key: inject-annotations
+	cur := make(map[string]string)
+	if item, exist := extra["inject-annotations"]; exist {
+		var ok bool
+		cur, ok = item.(map[string]string)
+		if !ok {
+			c.Log("Convert extra item %+v to map[string]string err %s", item, err.Error())
+			return
+		}
+	} else {
+		return
+	}
+
 	splitSep := "\n---\n"
 	for name, content := range files {
 		if strings.TrimSpace(content) == "" {
@@ -500,18 +517,6 @@ func (c *Configuration) injectAnnotationsByExtra(extra map[string]interface{}, f
 			annotations := obj.GetAnnotations()
 			if annotations == nil {
 				annotations = make(map[string]string)
-			}
-
-			// Hard code , read value from extra's key: inject-annotations
-			cur := make(map[string]string)
-			if item, exist := extra["inject-annotations"]; exist {
-				var ok bool
-				cur, ok = item.(map[string]string)
-				if !ok {
-					c.Log("Convert extra item %+v to map[string]string err %s", item, err.Error())
-					newContents = append(newContents, playload)
-					continue
-				}
 			}
 
 			for k, v := range cur {
