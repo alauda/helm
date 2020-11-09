@@ -484,7 +484,7 @@ func (c *Configuration) injectAnnotationsByExtra(extra map[string]interface{}, f
 		var ok bool
 		cur, ok = item.(map[string]string)
 		if !ok {
-			c.Log("Convert extra item %+v to map[string]string err %s", item, err.Error())
+			c.Log("Convert extra item %+v to map[string]string err", item)
 			return
 		}
 	} else {
