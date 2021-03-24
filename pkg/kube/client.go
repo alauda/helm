@@ -213,8 +213,19 @@ func (c *Client) Update(original, target ResourceList, force bool) (*Result, err
 		}
 
 		if err := updateResource(c, info, originalInfo.Object, flag); err != nil {
-			c.Log("error updating the resource %q:\n\t %v", info.Name, err)
-			updateErrors = append(updateErrors, err.Error())
+			// FIXME: the merge type for patch custom resources with restrictions in k8s code
+			// Error message: the body of the request was in an unknown format - accepted media types include: application/json-patch+json, application/merge-patch+json, application/apply-patch+yaml
+			// Re-force update here
+			if strings.Contains(err.Error(), "the body of the request was in an unknown format") {
+				c.Log("Re-force updating the resource %q:", info.Name)
+				if errF := updateResource(c, info, originalInfo.Object, true); errF != nil {
+					c.Log("error force updating the resource %q:\n\t %v", info.Name, errF)
+					updateErrors = append(updateErrors, errF.Error())
+				}
+			} else {
+				c.Log("error updating the resource %q:\n\t %v", info.Name, err)
+				updateErrors = append(updateErrors, err.Error())
+			}
 		}
 		// Because we check for errors later, append the info regardless
 		res.Updated = append(res.Updated, info)
