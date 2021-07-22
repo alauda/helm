@@ -26,13 +26,13 @@ import (
 	"testing"
 	"time"
 
-	auth "github.com/deislabs/oras/pkg/auth/docker"
-	"github.com/docker/distribution/configuration"
-	"github.com/docker/distribution/registry"
-	_ "github.com/docker/distribution/registry/auth/htpasswd"           // used for docker test registry
-	_ "github.com/docker/distribution/registry/storage/driver/inmemory" // used for docker test registry
+	"github.com/distribution/distribution/v3/configuration"
+	"github.com/distribution/distribution/v3/registry"
+	_ "github.com/distribution/distribution/v3/registry/auth/htpasswd"           // used for docker test registry
+	_ "github.com/distribution/distribution/v3/registry/storage/driver/inmemory" // used for docker test registry
 	"github.com/phayes/freeport"
 	"golang.org/x/crypto/bcrypt"
+	auth "oras.land/oras-go/pkg/auth/docker"
 	"sigs.k8s.io/yaml"
 
 	ociRegistry "helm.sh/helm/v3/internal/experimental/registry"
