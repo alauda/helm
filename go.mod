@@ -19,6 +19,7 @@ require (
 	github.com/evanphx/json-patch v4.5.0+incompatible
 	github.com/gobwas/glob v0.2.3
 	github.com/gofrs/flock v0.7.1
+	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/gosuri/uitable v0.0.4
 	github.com/jmoiron/sqlx v1.2.0
 	github.com/lib/pq v1.7.0
@@ -26,14 +27,15 @@ require (
 	github.com/mitchellh/copystructure v1.0.0
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.0.1
+	github.com/opencontainers/runc v1.0.1 // indirect
 	github.com/pkg/errors v0.9.1
 	github.com/rubenv/sql-migrate v0.0.0-20200616145509-8d140a17f351
-	github.com/sirupsen/logrus v1.6.0
+	github.com/sirupsen/logrus v1.8.1
 	github.com/spf13/cobra v1.0.0
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.6.1
 	github.com/xeipuuv/gojsonschema v1.2.0
-	golang.org/x/crypto v0.0.0-20200622213623-75b288015ac9
+	golang.org/x/crypto v0.0.0-20210817164053-32db794688a5
 	k8s.io/api v0.18.4
 	k8s.io/apiextensions-apiserver v0.18.4
 	k8s.io/apimachinery v0.18.4
