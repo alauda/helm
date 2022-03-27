@@ -17,7 +17,6 @@ package gates
 
 import (
 	"fmt"
-	"os"
 )
 
 // Gate is the name of the feature gate.
@@ -30,7 +29,7 @@ func (g Gate) String() string {
 
 // IsEnabled determines whether a certain feature gate is enabled.
 func (g Gate) IsEnabled() bool {
-	return os.Getenv(string(g)) != ""
+	return true
 }
 
 func (g Gate) Error() error {

@@ -140,11 +140,27 @@ func (c *Client) PushChart(ref *Reference, insecure bool, plainHTTP bool) error 
 	fmt.Fprintf(c.out, "The push refers to repository [%s]\n", r.Repo)
 	c.printCacheRefSummary(r)
 	layers := []ocispec.Descriptor{*r.ContentLayer}
+
 	_, err = oras.Push(ctx(c.out, c.debug), c.resolver, r.Name, c.cache.Provider(), layers,
 		oras.WithConfig(*r.Config), oras.WithNameValidation(nil))
-	if err != nil {
+	if err != nil && insecure {
+		resolver, err := c.newResolver(insecure, true)
+		if err != nil {
+			return err
+		}
+		c.resolver = &Resolver{
+			Resolver: resolver,
+		}
+
+		_, err = oras.Push(ctx(c.out, c.debug), c.resolver, r.Name, c.cache.Provider(), layers,
+			oras.WithConfig(*r.Config), oras.WithNameValidation(nil))
+		if err != nil {
+			return err
+		}
+	} else if err != nil {
 		return err
 	}
+
 	s := ""
 	numLayers := len(layers)
 	if 1 < numLayers {
@@ -179,7 +195,23 @@ func (c *Client) PullChart(ref *Reference, insecure bool, plainHTTP bool) error 
 		oras.WithPullEmptyNameAllowed(),
 		oras.WithAllowedMediaTypes(KnownMediaTypes()),
 		oras.WithContentProvideIngester(c.cache.ProvideIngester()))
-	if err != nil {
+	if err != nil && insecure {
+		resolver, err := c.newResolver(insecure, true)
+		if err != nil {
+			return err
+		}
+		c.resolver = &Resolver{
+			Resolver: resolver,
+		}
+
+		manifest, _, err = oras.Pull(ctx(c.out, c.debug), c.resolver, ref.FullName(), c.cache.Ingester(),
+			oras.WithPullEmptyNameAllowed(),
+			oras.WithAllowedMediaTypes(KnownMediaTypes()),
+			oras.WithContentProvideIngester(c.cache.ProvideIngester()))
+		if err != nil {
+			return err
+		}
+	} else if err != nil {
 		return err
 	}
 	err = c.cache.AddManifest(ref, &manifest)
