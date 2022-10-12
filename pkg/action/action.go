@@ -262,41 +262,46 @@ func (c *Configuration) injectAnnotations(originalAnnotations map[string]string,
 		playloads := strings.Split(strings.TrimSpace(content), splitSep)
 		newContents := make([]string, 0)
 		for _, playload := range playloads {
-			if strings.TrimSpace(playload) == "" {
+			p := strings.TrimSpace(playload)
+			if p == "" {
 				continue
 			}
 
-			obj := &unstructured.Unstructured{}
-			// decode YAML/JSON into unstructured.Unstructured
-			dec := serializer_yaml.NewDecodingSerializer(unstructured.UnstructuredJSONScheme)
-			_, _, err := dec.Decode([]byte(strings.TrimSpace(playload)), nil, obj)
-			if err != nil {
-				c.Log("Decode yaml err %s", err.Error())
-				newContents = append(newContents, playload)
-				continue
-			}
-
-			annotations := obj.GetAnnotations()
-			if annotations == nil {
-				annotations = make(map[string]string)
-			}
-
-			for k, v := range cur {
-				if _, exist := annotations[k]; !exist {
-					c.Log("Inject %s=%s to obj annotations, obj kind: %s, obj name: %s", k, v, obj.GroupVersionKind(), obj.GetName())
-					annotations[k] = v
+			// sometimes there may be "\n---" in the playload content
+			strs := strings.Split(p, "\n---")
+			for _, s := range strs {
+				obj := &unstructured.Unstructured{}
+				// decode YAML/JSON into unstructured.Unstructured
+				dec := serializer_yaml.NewDecodingSerializer(unstructured.UnstructuredJSONScheme)
+				_, _, err := dec.Decode([]byte(strings.TrimSpace(s)), nil, obj)
+				if err != nil {
+					c.Log("Decode yaml err %s", err.Error())
+					newContents = append(newContents, s)
+					continue
 				}
-			}
-			obj.SetAnnotations(annotations)
 
-			b, err := yaml.Marshal(obj)
-			if err != nil {
-				c.Log("Yaml Marshal err %s", err.Error())
-				newContents = append(newContents, playload)
-				continue
-			}
+				annotations := obj.GetAnnotations()
+				if annotations == nil {
+					annotations = make(map[string]string)
+				}
 
-			newContents = append(newContents, string(b))
+				for k, v := range cur {
+					if _, exist := annotations[k]; !exist {
+						c.Log("Inject %s=%s to obj annotations, obj kind: %s, obj name: %s", k, v, obj.GroupVersionKind(), obj.GetName())
+						annotations[k] = v
+					}
+				}
+				obj.SetAnnotations(annotations)
+
+				b, err := yaml.Marshal(obj)
+				if err != nil {
+					c.Log("Yaml Marshal err %s", err.Error())
+					newContents = append(newContents, s)
+					continue
+				}
+
+				newContents = append(newContents, string(b))
+			}
 		}
 
 		files[name] = strings.Join(newContents, splitSep)
