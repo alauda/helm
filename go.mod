@@ -36,12 +36,12 @@ require (
 	golang.org/x/term v0.0.0-20210927222741-03fcf44c2211
 	golang.org/x/text v0.3.7
 	google.golang.org/grpc v1.47.0
-	k8s.io/api v0.25.2
+	k8s.io/api v0.25.3
 	k8s.io/apiextensions-apiserver v0.25.2
-	k8s.io/apimachinery v0.25.2
+	k8s.io/apimachinery v0.25.3
 	k8s.io/apiserver v0.25.2
 	k8s.io/cli-runtime v0.25.2
-	k8s.io/client-go v0.25.2
+	k8s.io/client-go v0.25.3
 	k8s.io/klog/v2 v2.70.1
 	k8s.io/kubectl v0.25.2
 	oras.land/oras-go v1.2.0
