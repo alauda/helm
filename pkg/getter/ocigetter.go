@@ -28,7 +28,7 @@ type OCIGetter struct {
 	opts options
 }
 
-//Get performs a Get from repo.Getter and returns the body.
+// Get performs a Get from repo.Getter and returns the body.
 func (g *OCIGetter) Get(href string, options ...Option) (*bytes.Buffer, error) {
 	for _, opt := range options {
 		opt(&g.opts)
@@ -49,7 +49,7 @@ func (g *OCIGetter) get(href string) (*bytes.Buffer, error) {
 		return nil, err
 	}
 
-	buf, err := client.PullChart(r)
+	buf, err := client.PullChart(r, false, false)
 	if err != nil {
 		return nil, err
 	}
