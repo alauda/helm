@@ -39,6 +39,12 @@ func (g *OCIGetter) Get(href string, options ...Option) (*bytes.Buffer, error) {
 func (g *OCIGetter) get(href string) (*bytes.Buffer, error) {
 	client := g.opts.registryClient
 
+	if g.opts.insecureSkipVerifyTLS {
+		if err := client.WithInsecureResolver(); err != nil {
+			return nil, err
+		}
+	}
+
 	ref := strings.TrimPrefix(href, fmt.Sprintf("%s://", registry.OCIScheme))
 
 	var pullOpts []registry.PullOption

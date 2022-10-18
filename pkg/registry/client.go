@@ -18,6 +18,7 @@ package registry // import "helm.sh/helm/v3/pkg/registry"
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -87,10 +88,7 @@ func NewClient(options ...ClientOption) (*Client, error) {
 		client.authorizer = authClient
 	}
 	if client.resolver == nil {
-		headers := http.Header{}
-		headers.Set("User-Agent", version.GetUserAgent())
-		opts := []auth.ResolverOption{auth.WithResolverHeaders(headers)}
-		resolver, err := client.authorizer.ResolverWithOpts(opts...)
+		resolver, err := client.newResolver(false)
 		if err != nil {
 			return nil, err
 		}
@@ -136,6 +134,36 @@ func NewClient(options ...ClientOption) (*Client, error) {
 
 	}
 	return client, nil
+}
+
+func (c *Client) newResolver(insecure bool) (remotes.Resolver, error) {
+	headers := http.Header{}
+	headers.Set("User-Agent", version.GetUserAgent())
+	opts := []auth.ResolverOption{auth.WithResolverHeaders(headers)}
+
+	if insecure {
+		insecureClient := &http.Client{
+			Transport: &http.Transport{
+				DisableCompression: true,
+				Proxy:              http.ProxyFromEnvironment,
+				TLSClientConfig: &tls.Config{
+					InsecureSkipVerify: true,
+				},
+			},
+		}
+		opts = append(opts, auth.WithResolverClient(insecureClient))
+	}
+
+	return c.authorizer.ResolverWithOpts(opts...)
+}
+
+func (c *Client) WithInsecureResolver() error {
+	resolver, err := c.newResolver(true)
+	if err != nil {
+		return err
+	}
+	c.resolver = resolver
+	return nil
 }
 
 // ClientOptDebug returns a function that sets the debug setting on client options set
