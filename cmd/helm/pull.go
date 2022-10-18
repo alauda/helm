@@ -94,5 +94,11 @@ func newPullCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 		log.Fatal(err)
 	}
 
+	if client.InsecureSkipTLSverify {
+		if err := cfg.RegistryClient.WithInsecureResolver(); err != nil {
+			log.Fatal(err)
+		}
+	}
+
 	return cmd
 }
