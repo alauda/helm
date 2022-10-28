@@ -164,7 +164,7 @@ func (cfg *Configuration) renderResources(ch *chart.Chart, values chartutil.Valu
 	notes := notesBuffer.String()
 
 	// Inject annotations to files by Metadata.Annotations field of chart
-	c.injectAnnotations(ch.Metadata.Annotations, files)
+	cfg.injectAnnotations(ch.Metadata.Annotations, files)
 
 	// Sort hooks, manifests, and partials. Only hooks and manifests are returned,
 	// as partials are not used after renderer.Render. Empty manifests are also
@@ -233,7 +233,7 @@ func (cfg *Configuration) renderResources(ch *chart.Chart, values chartutil.Valu
 }
 
 // injectAnnotations will inject annotations to files
-func (c *Configuration) injectAnnotations(originalAnnotations map[string]string, files map[string]string) {
+func (cfg *Configuration) injectAnnotations(originalAnnotations map[string]string, files map[string]string) {
 	if originalAnnotations == nil {
 		return
 	}
@@ -242,7 +242,7 @@ func (c *Configuration) injectAnnotations(originalAnnotations map[string]string,
 	cur := make(map[string]string)
 	if item, exist := originalAnnotations["inject-annotations"]; exist {
 		if err := json.Unmarshal([]byte(item), &cur); err != nil {
-			c.Log("Convert extra item %+v to map[string]string err", item)
+			cfg.Log("Convert extra item %+v to map[string]string err", item)
 			return
 		}
 	} else {
@@ -275,7 +275,7 @@ func (c *Configuration) injectAnnotations(originalAnnotations map[string]string,
 				dec := serializer_yaml.NewDecodingSerializer(unstructured.UnstructuredJSONScheme)
 				_, _, err := dec.Decode([]byte(strings.TrimSpace(s)), nil, obj)
 				if err != nil {
-					c.Log("Decode yaml err %s", err.Error())
+					cfg.Log("Decode yaml err %s", err.Error())
 					newContents = append(newContents, s)
 					continue
 				}
@@ -287,7 +287,7 @@ func (c *Configuration) injectAnnotations(originalAnnotations map[string]string,
 
 				for k, v := range cur {
 					if _, exist := annotations[k]; !exist {
-						c.Log("Inject %s=%s to obj annotations, obj kind: %s, obj name: %s", k, v, obj.GroupVersionKind(), obj.GetName())
+						cfg.Log("Inject %s=%s to obj annotations, obj kind: %s, obj name: %s", k, v, obj.GroupVersionKind(), obj.GetName())
 						annotations[k] = v
 					}
 				}
@@ -295,7 +295,7 @@ func (c *Configuration) injectAnnotations(originalAnnotations map[string]string,
 
 				b, err := yaml.Marshal(obj)
 				if err != nil {
-					c.Log("Yaml Marshal err %s", err.Error())
+					cfg.Log("Yaml Marshal err %s", err.Error())
 					newContents = append(newContents, s)
 					continue
 				}

@@ -273,6 +273,31 @@ func (i *Install) RunWithContext(ctx context.Context, chrt *chart.Chart, vals ma
 	// Mark this release as in-progress
 	rel.SetStatus(release.StatusPendingInstall, "Initial install underway")
 
+	var toBeAdopted kube.ResourceList
+	resources, err := i.cfg.KubeClient.Build(bytes.NewBufferString(rel.Manifest), !i.DisableOpenAPIValidation)
+	if err != nil {
+		return nil, errors.Wrap(err, "unable to build kubernetes objects from release manifest")
+	}
+
+	// It is safe to use "force" here because these are resources currently rendered by the chart.
+	err = resources.Visit(setMetadataVisitor(rel.Name, rel.Namespace, true))
+	if err != nil {
+		return nil, err
+	}
+
+	// Install requires an extra validation step of checking that resources
+	// don't already exist before we actually create resources. If we continue
+	// forward and create the release object with resources that already exist,
+	// we'll end up in a state where we will delete those resources upon
+	// deleting the release because the manifest will be pointing at that
+	// resource
+	if !i.ClientOnly && !isUpgrade && len(resources) > 0 {
+		toBeAdopted, err = existingResourceConflict(resources, rel.Name, rel.Namespace, i.ForceAdopt)
+		if err != nil {
+			return nil, errors.Wrap(err, "rendered manifests contain a resource that already exists. Unable to continue with install")
+		}
+	}
+
 	// Bail out here if it is a dry run
 	if i.DryRun {
 		rel.Info.Description = "Dry run complete"
@@ -331,41 +356,16 @@ func (i *Install) RunWithContext(ctx context.Context, chrt *chart.Chart, vals ma
 }
 
 func (i *Install) performInstall(c chan<- resultMessage, rel *release.Release, toBeAdopted kube.ResourceList, resources kube.ResourceList) {
-
 	// pre-install hooks
 	if !i.DisableHooks {
 		if err := i.cfg.execHook(rel, release.HookCRDInstall, i.Timeout); err != nil {
-			return i.failRelease(rel, fmt.Errorf("failed crd-install: %s", err))
+			i.reportToRun(c, rel, fmt.Errorf("failed crd-install: %s", err))
+			return
 		}
 
 		if err := i.cfg.execHook(rel, release.HookPreInstall, i.Timeout); err != nil {
 			i.reportToRun(c, rel, fmt.Errorf("failed pre-install: %s", err))
 			return
-		}
-	}
-
-	var toBeAdopted kube.ResourceList
-	resources, err := i.cfg.KubeClient.Build(bytes.NewBufferString(rel.Manifest), !i.DisableOpenAPIValidation)
-	if err != nil {
-		return nil, errors.Wrap(err, "unable to build kubernetes objects from release manifest")
-	}
-
-	// It is safe to use "force" here because these are resources currently rendered by the chart.
-	err = resources.Visit(setMetadataVisitor(rel.Name, rel.Namespace, true))
-	if err != nil {
-		return nil, err
-	}
-
-	// Install requires an extra validation step of checking that resources
-	// don't already exist before we actually create resources. If we continue
-	// forward and create the release object with resources that already exist,
-	// we'll end up in a state where we will delete those resources upon
-	// deleting the release because the manifest will be pointing at that
-	// resource
-	if !i.ClientOnly && !isUpgrade && len(resources) > 0 {
-		toBeAdopted, err = existingResourceConflict(resources, rel.Name, rel.Namespace, i.ForceAdopt)
-		if err != nil {
-			return nil, errors.Wrap(err, "rendered manifests contain a resource that already exists. Unable to continue with install")
 		}
 	}
 
