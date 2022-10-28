@@ -157,7 +157,35 @@ func Test_ReadyChecker_statefulSetReady(t *testing.T) {
 		{
 			name: "statefulset is not ready when partition is set",
 			args: args{
-				sts: newStatefulSet("foo", 1, 1, 1, 1),
+				sts: newStatefulSet("foo", 2, 1, 1, 0),
+			},
+			want: false,
+		},
+		{
+			name: "statefulset is ready when partition is set and no change in template",
+			args: args{
+				sts: newStatefulSet("foo", 2, 1, 2, 2),
+			},
+			want: true,
+		},
+		{
+			name: "statefulset is ready when partition is greater than replicas",
+			args: args{
+				sts: newStatefulSet("foo", 1, 2, 1, 1),
+			},
+			want: true,
+		},
+		{
+			name: "statefulset is not ready when status of latest generation has not yet been observed",
+			args: args{
+				sts: newStatefulSetWithNewGeneration("foo", 1, 0, 1, 1),
+			},
+			want: false,
+		},
+		{
+			name: "statefulset is not ready when current revision for current replicas does not match update revision for updated replicas",
+			args: args{
+				sts: newStatefulSetWithUpdateRevision("foo", 1, 0, 1, 1, "foo-bbbbbbb"),
 			},
 			want: false,
 		},
@@ -241,38 +269,43 @@ func Test_ReadyChecker_jobReady(t *testing.T) {
 	}{
 		{
 			name: "job is completed",
-			args: args{job: newJob("foo", 1, 1, 1, 0)},
+			args: args{job: newJob("foo", 1, intToInt32(1), 1, 0)},
 			want: true,
 		},
 		{
 			name: "job is incomplete",
-			args: args{job: newJob("foo", 1, 1, 0, 0)},
+			args: args{job: newJob("foo", 1, intToInt32(1), 0, 0)},
 			want: false,
 		},
 		{
 			name: "job is failed",
-			args: args{job: newJob("foo", 1, 1, 0, 1)},
+			args: args{job: newJob("foo", 1, intToInt32(1), 0, 1)},
 			want: false,
 		},
 		{
 			name: "job is completed with retry",
-			args: args{job: newJob("foo", 1, 1, 1, 1)},
+			args: args{job: newJob("foo", 1, intToInt32(1), 1, 1)},
 			want: true,
 		},
 		{
 			name: "job is failed with retry",
-			args: args{job: newJob("foo", 1, 1, 0, 2)},
+			args: args{job: newJob("foo", 1, intToInt32(1), 0, 2)},
 			want: false,
 		},
 		{
 			name: "job is completed single run",
-			args: args{job: newJob("foo", 0, 1, 1, 0)},
+			args: args{job: newJob("foo", 0, intToInt32(1), 1, 0)},
 			want: true,
 		},
 		{
 			name: "job is failed single run",
-			args: args{job: newJob("foo", 0, 1, 0, 1)},
+			args: args{job: newJob("foo", 0, intToInt32(1), 0, 1)},
 			want: false,
+		},
+		{
+			name: "job with null completions",
+			args: args{job: newJob("foo", 0, nil, 1, 0)},
+			want: true,
 		},
 	}
 	for _, tt := range tests {
@@ -358,8 +391,9 @@ func newDaemonSet(name string, maxUnavailable, numberReady, desiredNumberSchedul
 func newStatefulSet(name string, replicas, partition, readyReplicas, updatedReplicas int) *appsv1.StatefulSet {
 	return &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: defaultNamespace,
+			Name:       name,
+			Namespace:  defaultNamespace,
+			Generation: int64(1),
 		},
 		Spec: appsv1.StatefulSetSpec{
 			UpdateStrategy: appsv1.StatefulSetUpdateStrategy{
@@ -385,10 +419,25 @@ func newStatefulSet(name string, replicas, partition, readyReplicas, updatedRepl
 			},
 		},
 		Status: appsv1.StatefulSetStatus{
-			UpdatedReplicas: int32(updatedReplicas),
-			ReadyReplicas:   int32(readyReplicas),
+			ObservedGeneration: int64(1),
+			CurrentRevision:    name + "-aaaaaaa",
+			UpdateRevision:     name + "-aaaaaaa",
+			UpdatedReplicas:    int32(updatedReplicas),
+			ReadyReplicas:      int32(readyReplicas),
 		},
 	}
+}
+
+func newStatefulSetWithNewGeneration(name string, replicas, partition, readyReplicas, updatedReplicas int) *appsv1.StatefulSet {
+	ss := newStatefulSet(name, replicas, partition, readyReplicas, updatedReplicas)
+	ss.Generation++
+	return ss
+}
+
+func newStatefulSetWithUpdateRevision(name string, replicas, partition, readyReplicas, updatedReplicas int, updateRevision string) *appsv1.StatefulSet {
+	ss := newStatefulSet(name, replicas, partition, readyReplicas, updatedReplicas)
+	ss.Status.UpdateRevision = updateRevision
+	return ss
 }
 
 func newDeployment(name string, replicas, maxSurge, maxUnavailable int) *appsv1.Deployment {
@@ -481,7 +530,7 @@ func newPersistentVolumeClaim(name string, phase corev1.PersistentVolumeClaimPha
 	}
 }
 
-func newJob(name string, backoffLimit, completions, succeeded, failed int) *batchv1.Job {
+func newJob(name string, backoffLimit int, completions *int32, succeeded int, failed int) *batchv1.Job {
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -489,7 +538,7 @@ func newJob(name string, backoffLimit, completions, succeeded, failed int) *batc
 		},
 		Spec: batchv1.JobSpec{
 			BackoffLimit: intToInt32(backoffLimit),
-			Completions:  intToInt32(completions),
+			Completions:  completions,
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:   name,

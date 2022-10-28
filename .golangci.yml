@@ -1,5 +1,5 @@
 run:
-  timeout: 2m
+  timeout: 10m
 
 linters:
   disable-all: true
@@ -8,12 +8,12 @@ linters:
     - dupl
     - gofmt
     - goimports
-    - golint
     - gosimple
     - govet
     - ineffassign
     - misspell
     - nakedret
+    - revive
     - structcheck
     - unused
     - varcheck

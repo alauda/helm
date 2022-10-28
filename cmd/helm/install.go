@@ -17,8 +17,13 @@ limitations under the License.
 package main
 
 import (
+	"context"
+	"fmt"
 	"io"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/pkg/errors"
@@ -44,9 +49,10 @@ a path to an unpacked chart directory or a URL.
 
 To override values in a chart, use either the '--values' flag and pass in a file
 or use the '--set' flag and pass configuration from the command line, to force
-a string value use '--set-string'. In case a value is large and therefore
-you want not to use neither '--values' nor '--set', use '--set-file' to read the
-single large value from file.
+a string value use '--set-string'. You can use '--set-file' to set individual
+values from a file when the value itself is too long for the command line
+or is dynamically generated. You can also use '--set-json' to set json values
+(scalars/objects/arrays) from the command line.
 
     $ helm install -f myvalues.yaml myredis ./redis
 
@@ -62,6 +68,11 @@ or
 
     $ helm install --set-file my_script=dothings.sh myredis ./redis
 
+or
+
+    $ helm install --set-json 'master.sidecars=[{"name":"sidecar","image":"myImage","imagePullPolicy":"Always","ports":[{"name":"portname","containerPort":1234}]}]' myredis ./redis
+
+
 You can specify the '--values'/'-f' flag multiple times. The priority will be given to the
 last (right-most) file specified. For example, if both myvalues.yaml and override.yaml
 contained a key called 'Test', the value set in override.yaml would take precedence:
@@ -74,6 +85,13 @@ set for a key called 'foo', the 'newbar' value would take precedence:
 
     $ helm install --set foo=bar --set foo=newbar  myredis ./redis
 
+Similarly, in the following example 'foo' is set to '["four"]': 
+
+    $ helm install --set-json='foo=["one", "two", "three"]' --set-json='foo=["four"]' myredis ./redis
+
+And in the following example, 'foo' is set to '{"key1":"value1","key2":"bar"}':
+
+    $ helm install --set-json='foo={"key1":"value1","key2":"value2"}' --set-json='foo.key2="bar"' myredis ./redis
 
 To check the generated manifests of a release without installing the chart,
 the '--debug' and '--dry-run' flags can be combined.
@@ -81,13 +99,14 @@ the '--debug' and '--dry-run' flags can be combined.
 If --verify is set, the chart MUST have a provenance file, and the provenance
 file MUST pass all verification steps.
 
-There are five different ways you can express the chart you want to install:
+There are six different ways you can express the chart you want to install:
 
 1. By chart reference: helm install mymaria example/mariadb
 2. By path to a packaged chart: helm install mynginx ./nginx-1.2.3.tgz
 3. By path to an unpacked chart directory: helm install mynginx ./nginx
 4. By absolute URL: helm install mynginx https://example.com/charts/nginx-1.2.3.tgz
 5. By chart reference and repo url: helm install --repo https://example.com/charts/ mynginx nginx
+6. By OCI registries: helm install mynginx --version 1.2.3 oci://example.com/charts/nginx
 
 CHART REFERENCES
 
@@ -119,7 +138,7 @@ func newInstallCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 		RunE: func(_ *cobra.Command, args []string) error {
 			rel, err := runInstall(args, client, valueOpts, out)
 			if err != nil {
-				return err
+				return errors.Wrap(err, "INSTALLATION FAILED")
 			}
 
 			return outfmt.Write(out, &statusPrinter{rel, settings.Debug, false})
@@ -145,7 +164,7 @@ func addInstallFlags(cmd *cobra.Command, f *pflag.FlagSet, client *action.Instal
 	f.StringVar(&client.NameTemplate, "name-template", "", "specify template used to name the release")
 	f.StringVar(&client.Description, "description", "", "add a custom description")
 	f.BoolVar(&client.Devel, "devel", false, "use development versions, too. Equivalent to version '>0.0.0-0'. If --version is set, this is ignored")
-	f.BoolVar(&client.DependencyUpdate, "dependency-update", false, "run helm dependency update before installing the chart")
+	f.BoolVar(&client.DependencyUpdate, "dependency-update", false, "update dependencies if they are missing before installing the chart")
 	f.BoolVar(&client.DisableOpenAPIValidation, "disable-openapi-validation", false, "if set, the installation process will not validate rendered templates against the Kubernetes OpenAPI Schema")
 	f.BoolVar(&client.Atomic, "atomic", false, "if set, the installation process deletes the installation on failure. The --wait flag will be set automatically if --atomic is used")
 	f.BoolVar(&client.SkipCRDs, "skip-crds", false, "if set, no CRDs will be installed. By default, CRDs are installed if not already present")
@@ -214,6 +233,7 @@ func runInstall(args []string, client *action.Install, valueOpts *values.Options
 		// As of Helm 2.4.0, this is treated as a stopping condition:
 		// https://github.com/helm/helm/issues/2209
 		if err := action.CheckDependencies(chartRequested, req); err != nil {
+			err = errors.Wrap(err, "An error occurred while checking for chart dependencies. You may need to run `helm dependency build` to fetch missing dependencies")
 			if client.DependencyUpdate {
 				man := &downloader.Manager{
 					Out:              out,
@@ -239,7 +259,23 @@ func runInstall(args []string, client *action.Install, valueOpts *values.Options
 	}
 
 	client.Namespace = settings.Namespace()
-	return client.Run(chartRequested, vals)
+
+	// Create context and prepare the handle of SIGTERM
+	ctx := context.Background()
+	ctx, cancel := context.WithCancel(ctx)
+
+	// Set up channel on which to send signal notifications.
+	// We must use a buffered channel or risk missing the signal
+	// if we're not ready to receive when the signal is sent.
+	cSignal := make(chan os.Signal, 2)
+	signal.Notify(cSignal, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-cSignal
+		fmt.Fprintf(out, "Release %s has been cancelled.\n", args[0])
+		cancel()
+	}()
+
+	return client.RunWithContext(ctx, chartRequested, vals)
 }
 
 // checkIfInstallable validates if a chart can be installed

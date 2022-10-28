@@ -34,7 +34,7 @@ else
 fi
 
 echo "Installing Azure CLI"
-echo "deb [arch=amd64] https://packages.microsoft.com/repos/azure-cli/ stretch main" | sudo tee /etc/apt/sources.list.d/azure-cli.list
+echo "deb [arch=amd64] https://packages.microsoft.com/repos/azure-cli/ jammy main" | sudo tee /etc/apt/sources.list.d/azure-cli.list
 curl -L https://packages.microsoft.com/keys/microsoft.asc | sudo apt-key add
 sudo apt install apt-transport-https
 sudo apt update
@@ -46,4 +46,8 @@ make build-cross
 make dist checksum VERSION="${VERSION}"
 
 echo "Pushing binaries to Azure"
-az storage blob upload-batch -s _dist/ -d "$AZURE_STORAGE_CONTAINER_NAME" --pattern 'helm-*' --connection-string "$AZURE_STORAGE_CONNECTION_STRING"
+if [[ "${VERSION}" == "canary" ]]; then
+  az storage blob upload-batch -s _dist/ -d "$AZURE_STORAGE_CONTAINER_NAME" --pattern 'helm-*' --connection-string "$AZURE_STORAGE_CONNECTION_STRING" --overwrite
+else
+  az storage blob upload-batch -s _dist/ -d "$AZURE_STORAGE_CONTAINER_NAME" --pattern 'helm-*' --connection-string "$AZURE_STORAGE_CONNECTION_STRING"
+fi

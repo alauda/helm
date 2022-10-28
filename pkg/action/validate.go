@@ -51,7 +51,7 @@ func existingResourceConflict(resources kube.ResourceList, releaseName, releaseN
 			if apierrors.IsNotFound(err) {
 				return nil
 			}
-			return errors.Wrap(err, "could not get information about the resource")
+			return errors.Wrapf(err, "could not get information about the resource %s", resourceString(info))
 		}
 
 		if !adopt {

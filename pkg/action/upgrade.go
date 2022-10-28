@@ -21,10 +21,10 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pkg/errors"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/cli-runtime/pkg/resource"
 
@@ -101,13 +101,25 @@ type Upgrade struct {
 	DisableOpenAPIValidation bool
 	// ForceAdopt will adopt resources that already exists
 	ForceAdopt bool
+	// Get missing dependencies
+	DependencyUpdate bool
+	// Lock to control raceconditions when the process receives a SIGTERM
+	Lock sync.Mutex
+}
+
+type resultMessage struct {
+	r *release.Release
+	e error
 }
 
 // NewUpgrade creates a new Upgrade object with the given configuration.
 func NewUpgrade(cfg *Configuration) *Upgrade {
-	return &Upgrade{
+	up := &Upgrade{
 		cfg: cfg,
 	}
+	up.ChartPathOptions.registryClient = cfg.RegistryClient
+
+	return up
 }
 
 func (u *Upgrade) installCRDs(crds []chart.CRD) error {
@@ -122,12 +134,6 @@ func (u *Upgrade) installCRDs(crds []chart.CRD) error {
 
 		// Send them to Kube
 		if _, err := u.cfg.KubeClient.Create(res); err != nil {
-			// If the error is CRD already exists, continue.
-			if apierrors.IsAlreadyExists(err) {
-				crdName := res[0].Name
-				u.cfg.Log("CRD %s is already present. Skipping.", crdName)
-				continue
-			}
 			u.cfg.Log("failed to install CRD %s, try to update it. error %+v", obj.Name, err)
 			if _, err := u.cfg.KubeClient.Update(res, res, true); err != nil {
 				u.cfg.Log("failed to update CRD %s. error %+v", obj.Name, err)
@@ -159,6 +165,12 @@ func (u *Upgrade) installCRDs(crds []chart.CRD) error {
 
 // Run executes the upgrade on the given release.
 func (u *Upgrade) Run(name string, chart *chart.Chart, vals map[string]interface{}) (*release.Release, error) {
+	ctx := context.Background()
+	return u.RunWithContext(ctx, name, chart, vals)
+}
+
+// RunWithContext executes the upgrade on the given release with context.
+func (u *Upgrade) RunWithContext(ctx context.Context, name string, chart *chart.Chart, vals map[string]interface{}) (*release.Release, error) {
 	if err := u.cfg.KubeClient.IsReachable(); err != nil {
 		return nil, err
 	}
@@ -190,7 +202,7 @@ func (u *Upgrade) Run(name string, chart *chart.Chart, vals map[string]interface
 	u.cfg.Releases.MaxHistory = u.MaxHistory
 
 	u.cfg.Log("performing update for %s", name)
-	res, err := u.performUpgrade(currentRelease, upgradedRelease)
+	res, err := u.performUpgrade(ctx, currentRelease, upgradedRelease)
 	if err != nil {
 		return res, err
 	}
@@ -306,8 +318,7 @@ func (u *Upgrade) prepareUpgrade(name string, chart *chart.Chart, vals map[strin
 	return currentRelease, upgradedRelease, err
 }
 
-func (u *Upgrade) performUpgrade(originalRelease, upgradedRelease *release.Release) (*release.Release, error) {
-
+func (u *Upgrade) performUpgrade(ctx context.Context, originalRelease, upgradedRelease *release.Release) (*release.Release, error) {
 	if !u.DisableHooks {
 		if err := u.cfg.execHook(upgradedRelease, release.HookCRDInstall, u.Timeout); err != nil {
 			return u.failRelease(upgradedRelease, kube.ResourceList{}, fmt.Errorf("crd-install hooks failed: %s", err))
@@ -377,11 +388,51 @@ func (u *Upgrade) performUpgrade(originalRelease, upgradedRelease *release.Relea
 	if err := u.cfg.Releases.Create(upgradedRelease); err != nil {
 		return nil, err
 	}
+	rChan := make(chan resultMessage)
+	ctxChan := make(chan resultMessage)
+	doneChan := make(chan interface{})
+	defer close(doneChan)
+	go u.releasingUpgrade(rChan, upgradedRelease, current, target, originalRelease)
+	go u.handleContext(ctx, doneChan, ctxChan, upgradedRelease)
+	select {
+	case result := <-rChan:
+		return result.r, result.e
+	case result := <-ctxChan:
+		return result.r, result.e
+	}
+}
 
+// Function used to lock the Mutex, this is important for the case when the atomic flag is set.
+// In that case the upgrade will finish before the rollback is finished so it is necessary to wait for the rollback to finish.
+// The rollback will be trigger by the function failRelease
+func (u *Upgrade) reportToPerformUpgrade(c chan<- resultMessage, rel *release.Release, created kube.ResourceList, err error) {
+	u.Lock.Lock()
+	if err != nil {
+		rel, err = u.failRelease(rel, created, err)
+	}
+	c <- resultMessage{r: rel, e: err}
+	u.Lock.Unlock()
+}
+
+// Setup listener for SIGINT and SIGTERM
+func (u *Upgrade) handleContext(ctx context.Context, done chan interface{}, c chan<- resultMessage, upgradedRelease *release.Release) {
+	select {
+	case <-ctx.Done():
+		err := ctx.Err()
+
+		// when the atomic flag is set the ongoing release finish first and doesn't give time for the rollback happens.
+		u.reportToPerformUpgrade(c, upgradedRelease, kube.ResourceList{}, err)
+	case <-done:
+		return
+	}
+}
+func (u *Upgrade) releasingUpgrade(c chan<- resultMessage, upgradedRelease *release.Release, current kube.ResourceList, target kube.ResourceList, originalRelease *release.Release) {
 	// pre-upgrade hooks
+
 	if !u.DisableHooks {
 		if err := u.cfg.execHook(upgradedRelease, release.HookPreUpgrade, u.Timeout); err != nil {
-			return u.failRelease(upgradedRelease, kube.ResourceList{}, fmt.Errorf("pre-upgrade hooks failed: %s", err))
+			u.reportToPerformUpgrade(c, upgradedRelease, kube.ResourceList{}, fmt.Errorf("pre-upgrade hooks failed: %s", err))
+			return
 		}
 	} else {
 		u.cfg.Log("upgrade hooks disabled for %s", upgradedRelease.Name)
@@ -390,7 +441,8 @@ func (u *Upgrade) performUpgrade(originalRelease, upgradedRelease *release.Relea
 	results, err := u.cfg.KubeClient.Update(current, target, u.Force)
 	if err != nil {
 		u.cfg.recordRelease(originalRelease)
-		return u.failRelease(upgradedRelease, results.Created, err)
+		u.reportToPerformUpgrade(c, upgradedRelease, results.Created, err)
+		return
 	}
 
 	if u.Recreate {
@@ -404,15 +456,20 @@ func (u *Upgrade) performUpgrade(originalRelease, upgradedRelease *release.Relea
 	}
 
 	if u.Wait {
+		u.cfg.Log(
+			"waiting for release %s resources (created: %d updated: %d  deleted: %d)",
+			upgradedRelease.Name, len(results.Created), len(results.Updated), len(results.Deleted))
 		if u.WaitForJobs {
 			if err := u.cfg.KubeClient.WaitWithJobs(target, u.Timeout); err != nil {
 				u.cfg.recordRelease(originalRelease)
-				return u.failRelease(upgradedRelease, results.Created, err)
+				u.reportToPerformUpgrade(c, upgradedRelease, results.Created, err)
+				return
 			}
 		} else {
 			if err := u.cfg.KubeClient.Wait(target, u.Timeout); err != nil {
 				u.cfg.recordRelease(originalRelease)
-				return u.failRelease(upgradedRelease, results.Created, err)
+				u.reportToPerformUpgrade(c, upgradedRelease, results.Created, err)
+				return
 			}
 		}
 	}
@@ -420,7 +477,8 @@ func (u *Upgrade) performUpgrade(originalRelease, upgradedRelease *release.Relea
 	// post-upgrade hooks
 	if !u.DisableHooks {
 		if err := u.cfg.execHook(upgradedRelease, release.HookPostUpgrade, u.Timeout); err != nil {
-			return u.failRelease(upgradedRelease, results.Created, fmt.Errorf("post-upgrade hooks failed: %s", err))
+			u.reportToPerformUpgrade(c, upgradedRelease, results.Created, fmt.Errorf("post-upgrade hooks failed: %s", err))
+			return
 		}
 	}
 
@@ -433,8 +491,7 @@ func (u *Upgrade) performUpgrade(originalRelease, upgradedRelease *release.Relea
 	} else {
 		upgradedRelease.Info.Description = "Upgrade complete"
 	}
-
-	return upgradedRelease, nil
+	u.reportToPerformUpgrade(c, upgradedRelease, nil, nil)
 }
 
 func (u *Upgrade) failRelease(rel *release.Release, created kube.ResourceList, err error) (*release.Release, error) {
