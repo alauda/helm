@@ -64,6 +64,7 @@ var events = map[string]release.HookEvent{
 	release.HookTest.String():         release.HookTest,
 	// Support test-success for backward compatibility with Helm 2 tests
 	"test-success": release.HookTest,
+	"crd-install":  release.HookCRDInstall,
 }
 
 // SortManifests takes a map of filename/YAML contents, splits the file

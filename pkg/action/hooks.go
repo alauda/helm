@@ -51,8 +51,10 @@ func (cfg *Configuration) execHook(rl *release.Release, hook release.HookEvent, 
 			h.DeletePolicies = []release.HookDeletePolicy{release.HookBeforeHookCreation}
 		}
 
-		if err := cfg.deleteHookByPolicy(h, release.HookBeforeHookCreation); err != nil {
-			return err
+		if hook != release.HookCRDInstall {
+			if err := cfg.deleteHookByPolicy(h, release.HookBeforeHookCreation); err != nil {
+				return err
+			}
 		}
 
 		resources, err := cfg.KubeClient.Build(bytes.NewBufferString(h.Manifest), true)

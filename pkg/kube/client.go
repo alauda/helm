@@ -233,7 +233,8 @@ func (c *Client) Update(original, target ResourceList, force bool) (*Result, err
 		}
 
 		helper := resource.NewHelper(info.Client, info.Mapping).WithFieldManager(getManagedFieldsManager())
-		if _, err := helper.Get(info.Namespace, info.Name); err != nil {
+		var existObject runtime.Object
+		if existObject, err = helper.Get(info.Namespace, info.Name); err != nil {
 			if !apierrors.IsNotFound(err) {
 				return errors.Wrap(err, "could not get information about the resource")
 			}
@@ -251,15 +252,61 @@ func (c *Client) Update(original, target ResourceList, force bool) (*Result, err
 			return nil
 		}
 
+		// if exist in cluster, but not in origin. If this is a Service(or PVC in the feature), we
+		// can delete it first. then create it. This is intent to avoid the patch/replace error
+		if original.Get(info) == nil {
+			c.Log("found resource exist in cluster but not in previous release: %s", info.Name)
+			kind := info.Mapping.GroupVersionKind.Kind
+			if kind == "Service" || kind == "Job" {
+				c.Log("found legacy resource exist in cluster, delete it: %s", info.Name)
+				if _, err := helper.Delete(info.Namespace, info.Name); err != nil {
+					c.Log("delete old resource error: %s", err.Error())
+				} else {
+					// this part should be the same as above
+					if err := createResource(info); err != nil {
+						return errors.Wrap(err, "failed to create resource")
+					}
+					// Append the created resource to the results
+					res.Created = append(res.Created, info)
+
+					kind := info.Mapping.GroupVersionKind.Kind
+					c.Log("Created a new %s called %q\n", kind, info.Name)
+					return nil
+				}
+			}
+		}
+
+		flag := force
+		if info.Mapping.GroupVersionKind.Kind != "CustomResourceDefinition" {
+			flag = false
+		}
 		originalInfo := original.Get(info)
 		if originalInfo == nil {
 			kind := info.Mapping.GroupVersionKind.Kind
-			return errors.Errorf("no %s with the name %q found", kind, info.Name)
+			c.Log("no %s with the name %q found, use reource in cluster", kind, info.Name)
+			originalInfo = &resource.Info{
+				Object: existObject,
+			}
+			flag = true
+		}
+		if info.Mapping.GroupVersionKind.Kind != "Job" {
+			flag = false
 		}
 
-		if err := updateResource(c, info, originalInfo.Object, force); err != nil {
-			c.Log("error updating the resource %q:\n\t %v", info.Name, err)
-			updateErrors = append(updateErrors, err.Error())
+		if err := updateResource(c, info, originalInfo.Object, flag); err != nil {
+			// FIXME: the merge type for patch custom resources with restrictions in k8s code
+			// Error message: the body of the request was in an unknown format - accepted media types include: application/json-patch+json, application/merge-patch+json, application/apply-patch+yaml
+			// Re-force update here
+			if strings.Contains(err.Error(), "the request was in an unknown format") {
+				c.Log("Re-force updating the resource %q:", info.Name)
+				if errF := updateResource(c, info, originalInfo.Object, true); errF != nil {
+					c.Log("error force updating the resource %q:\n\t %v", info.Name, errF)
+					updateErrors = append(updateErrors, errF.Error())
+				}
+			} else {
+				c.Log("error updating the resource %q:\n\t %v", info.Name, err)
+				updateErrors = append(updateErrors, err.Error())
+			}
 		}
 		// Because we check for errors later, append the info regardless
 		res.Updated = append(res.Updated, info)

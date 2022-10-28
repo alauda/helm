@@ -99,6 +99,8 @@ type Upgrade struct {
 	PostRenderer postrender.PostRenderer
 	// DisableOpenAPIValidation controls whether OpenAPI validation is enforced.
 	DisableOpenAPIValidation bool
+	// ForceAdopt will adopt resources that already exists
+	ForceAdopt bool
 	// Get missing dependencies
 	DependencyUpdate bool
 	// Lock to control raceconditions when the process receives a SIGTERM
@@ -120,6 +122,47 @@ func NewUpgrade(cfg *Configuration) *Upgrade {
 	return up
 }
 
+func (u *Upgrade) installCRDs(crds []chart.CRD) error {
+	// We do these one file at a time in the order they were read.
+	totalItems := []*resource.Info{}
+	for _, obj := range crds {
+		// Read in the resources
+		res, err := u.cfg.KubeClient.Build(bytes.NewBuffer(obj.File.Data), false)
+		if err != nil {
+			return errors.Wrapf(err, "failed to install CRD %s", obj.Name)
+		}
+
+		// Send them to Kube
+		if _, err := u.cfg.KubeClient.Create(res); err != nil {
+			u.cfg.Log("failed to install CRD %s, try to update it. error %+v", obj.Name, err)
+			if _, err := u.cfg.KubeClient.Update(res, res, true); err != nil {
+				u.cfg.Log("failed to update CRD %s. error %+v", obj.Name, err)
+				continue
+			}
+		}
+		totalItems = append(totalItems, res...)
+	}
+	if len(totalItems) > 0 {
+		// Invalidate the local cache, since it will not have the new CRDs
+		// present.
+		discoveryClient, err := u.cfg.RESTClientGetter.ToDiscoveryClient()
+		if err != nil {
+			return err
+		}
+		u.cfg.Log("Clearing discovery cache")
+		discoveryClient.Invalidate()
+		// Give time for the CRD to be recognized.
+
+		if err := u.cfg.KubeClient.Wait(totalItems, 60*time.Second); err != nil {
+			return err
+		}
+
+		// Make sure to force a rebuild of the cache.
+		discoveryClient.ServerGroups()
+	}
+	return nil
+}
+
 // Run executes the upgrade on the given release.
 func (u *Upgrade) Run(name string, chart *chart.Chart, vals map[string]interface{}) (*release.Release, error) {
 	ctx := context.Background()
@@ -130,6 +173,17 @@ func (u *Upgrade) Run(name string, chart *chart.Chart, vals map[string]interface
 func (u *Upgrade) RunWithContext(ctx context.Context, name string, chart *chart.Chart, vals map[string]interface{}) (*release.Release, error) {
 	if err := u.cfg.KubeClient.IsReachable(); err != nil {
 		return nil, err
+	}
+
+	// Pre-install anything in the crd/ directory. We do this before Helm
+	// contacts the upstream server and builds the capabilities object.
+	if crds := chart.CRDObjects(); !u.SkipCRDs && len(crds) > 0 {
+		// On dry run, bail here
+		if u.DryRun {
+			u.cfg.Log("WARNING: This chart or one of its subcharts contains CRDs. Rendering may fail or contain inaccuracies.")
+		} else if err := u.installCRDs(crds); err != nil {
+			return nil, err
+		}
 	}
 
 	// Make sure if Atomic is set, that wait is set as well. This makes it so
@@ -257,10 +311,21 @@ func (u *Upgrade) prepareUpgrade(name string, chart *chart.Chart, vals map[strin
 		upgradedRelease.Info.Notes = notesTxt
 	}
 	err = validateManifest(u.cfg.KubeClient, manifestDoc.Bytes(), !u.DisableOpenAPIValidation)
+	if err != nil {
+		u.cfg.Log("validate error, ignore for now: %s", err.Error())
+		err = nil
+	}
 	return currentRelease, upgradedRelease, err
 }
 
 func (u *Upgrade) performUpgrade(ctx context.Context, originalRelease, upgradedRelease *release.Release) (*release.Release, error) {
+	if !u.DisableHooks {
+		if err := u.cfg.execHook(upgradedRelease, release.HookCRDInstall, u.Timeout); err != nil {
+			return u.failRelease(upgradedRelease, kube.ResourceList{}, fmt.Errorf("crd-install hooks failed: %s", err))
+		}
+		u.cfg.Log("crd-install hook succeed.")
+	}
+
 	current, err := u.cfg.KubeClient.Build(bytes.NewBufferString(originalRelease.Manifest), false)
 	if err != nil {
 		// Checking for removed Kubernetes API error so can provide a more informative error message to the user
@@ -296,7 +361,7 @@ func (u *Upgrade) performUpgrade(ctx context.Context, originalRelease, upgradedR
 		}
 	}
 
-	toBeUpdated, err := existingResourceConflict(toBeCreated, upgradedRelease.Name, upgradedRelease.Namespace)
+	toBeUpdated, err := existingResourceConflict(toBeCreated, upgradedRelease.Name, upgradedRelease.Namespace, u.ForceAdopt)
 	if err != nil {
 		return nil, errors.Wrap(err, "rendered manifests contain a resource that already exists. Unable to continue with update")
 	}

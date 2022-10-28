@@ -100,6 +100,8 @@ type Install struct {
 	// OutputDir/<ReleaseName>
 	UseReleaseName bool
 	PostRenderer   postrender.PostRenderer
+	// ForceAdopt will adopt resources that already exists
+	ForceAdopt bool
 	// Lock to control raceconditions when the process receives a SIGTERM
 	Lock sync.Mutex
 }
@@ -290,7 +292,7 @@ func (i *Install) RunWithContext(ctx context.Context, chrt *chart.Chart, vals ma
 	// deleting the release because the manifest will be pointing at that
 	// resource
 	if !i.ClientOnly && !isUpgrade && len(resources) > 0 {
-		toBeAdopted, err = existingResourceConflict(resources, rel.Name, rel.Namespace)
+		toBeAdopted, err = existingResourceConflict(resources, rel.Name, rel.Namespace, i.ForceAdopt)
 		if err != nil {
 			return nil, errors.Wrap(err, "rendered manifests contain a resource that already exists. Unable to continue with install")
 		}
@@ -354,9 +356,13 @@ func (i *Install) RunWithContext(ctx context.Context, chrt *chart.Chart, vals ma
 }
 
 func (i *Install) performInstall(c chan<- resultMessage, rel *release.Release, toBeAdopted kube.ResourceList, resources kube.ResourceList) {
-
 	// pre-install hooks
 	if !i.DisableHooks {
+		if err := i.cfg.execHook(rel, release.HookCRDInstall, i.Timeout); err != nil {
+			i.reportToRun(c, rel, fmt.Errorf("failed crd-install: %s", err))
+			return
+		}
+
 		if err := i.cfg.execHook(rel, release.HookPreInstall, i.Timeout); err != nil {
 			i.reportToRun(c, rel, fmt.Errorf("failed pre-install: %s", err))
 			return
@@ -477,7 +483,7 @@ func (i *Install) availableName() error {
 	releaseutil.Reverse(h, releaseutil.SortByRevision)
 	rel := h[0]
 
-	if st := rel.Info.Status; i.Replace && (st == release.StatusUninstalled || st == release.StatusFailed) {
+	if st := rel.Info.Status; i.Replace && (st == release.StatusUninstalled || st == release.StatusFailed || st == release.StatusSuperseded) {
 		return nil
 	}
 	return errors.New("cannot re-use a name that is still in use")

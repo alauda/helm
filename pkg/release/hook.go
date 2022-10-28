@@ -34,6 +34,7 @@ const (
 	HookPreRollback  HookEvent = "pre-rollback"
 	HookPostRollback HookEvent = "post-rollback"
 	HookTest         HookEvent = "test"
+	HookCRDInstall   HookEvent = "crd-install"
 )
 
 func (x HookEvent) String() string { return string(x) }
