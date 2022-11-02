@@ -108,7 +108,15 @@ func (cache *Cache) FetchReference(ref *Reference) (*CacheRefSummary, error) {
 			if err != nil {
 				return &r, err
 			}
-			r.Manifest = &desc
+			descCopy := ocispec.Descriptor{
+				MediaType:   desc.MediaType,
+				Digest:      desc.Digest,
+				Size:        desc.Size,
+				URLs:        desc.URLs,
+				Annotations: desc.Annotations,
+				Platform:    desc.Platform,
+			}
+			r.Manifest = &descCopy
 			r.Config = &manifest.Config
 			numLayers := len(manifest.Layers)
 			if numLayers != 1 {
@@ -147,6 +155,9 @@ func (cache *Cache) FetchReference(ref *Reference) (*CacheRefSummary, error) {
 				return &r, err
 			}
 			r.Chart = ch
+
+			// no need to loop anymore
+			break
 		}
 	}
 	return &r, nil
