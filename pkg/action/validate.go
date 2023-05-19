@@ -69,19 +69,21 @@ func existingResourceConflict(resources kube.ResourceList, releaseName, releaseN
 }
 
 func checkOwnership(obj runtime.Object, releaseName, releaseNamespace string) error {
-	lbls, err := accessor.Labels(obj)
-	if err != nil {
-		return err
-	}
+	// FIXME: alauda app upgrade lost labels, so remove check of appManagedByLabel and appManagedByHelm
+	// lbls, err := accessor.Labels(obj)
+	// if err != nil {
+	// 	return err
+	// }
 	annos, err := accessor.Annotations(obj)
 	if err != nil {
 		return err
 	}
 
 	var errs []error
-	if err := requireValue(lbls, appManagedByLabel, appManagedByHelm); err != nil {
-		errs = append(errs, fmt.Errorf("label validation error: %s", err))
-	}
+	// FIXME: alauda app upgrade lost labels, so remove check of appManagedByLabel and appManagedByHelm
+	// if err := requireValue(lbls, appManagedByLabel, appManagedByHelm); err != nil {
+	// 	errs = append(errs, fmt.Errorf("label validation error: %s", err))
+	// }
 	if err := requireValue(annos, helmReleaseNameAnnotation, releaseName); err != nil {
 		errs = append(errs, fmt.Errorf("annotation validation error: %s", err))
 	}
