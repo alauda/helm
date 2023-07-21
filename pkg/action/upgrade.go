@@ -32,6 +32,7 @@ import (
 	"helm.sh/helm/v3/pkg/chartutil"
 	"helm.sh/helm/v3/pkg/kube"
 	"helm.sh/helm/v3/pkg/postrender"
+	"helm.sh/helm/v3/pkg/registry"
 	"helm.sh/helm/v3/pkg/release"
 	"helm.sh/helm/v3/pkg/releaseutil"
 	"helm.sh/helm/v3/pkg/storage/driver"
@@ -105,6 +106,8 @@ type Upgrade struct {
 	DependencyUpdate bool
 	// Lock to control raceconditions when the process receives a SIGTERM
 	Lock sync.Mutex
+	// Enable DNS lookups when rendering templates
+	EnableDNS bool
 }
 
 type resultMessage struct {
@@ -161,6 +164,11 @@ func (u *Upgrade) installCRDs(crds []chart.CRD) error {
 		discoveryClient.ServerGroups()
 	}
 	return nil
+}
+
+// SetRegistryClient sets the registry client to use when fetching charts.
+func (u *Upgrade) SetRegistryClient(client *registry.Client) {
+	u.ChartPathOptions.registryClient = client
 }
 
 // Run executes the upgrade on the given release.
@@ -285,7 +293,7 @@ func (u *Upgrade) prepareUpgrade(name string, chart *chart.Chart, vals map[strin
 		return nil, nil, err
 	}
 
-	hooks, manifestDoc, notesTxt, err := u.cfg.renderResources(chart, valuesToRender, "", "", u.SubNotes, false, false, u.PostRenderer, u.DryRun)
+	hooks, manifestDoc, notesTxt, err := u.cfg.renderResources(chart, valuesToRender, "", "", u.SubNotes, false, false, u.PostRenderer, u.DryRun, u.EnableDNS)
 	if err != nil {
 		return nil, nil, err
 	}
