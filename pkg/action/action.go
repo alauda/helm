@@ -18,7 +18,6 @@ package action
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path"
@@ -28,13 +27,10 @@ import (
 
 	"github.com/pkg/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	serializer_yaml "k8s.io/apimachinery/pkg/runtime/serializer/yaml"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-	"sigs.k8s.io/yaml"
 
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chartutil"
@@ -168,9 +164,6 @@ func (cfg *Configuration) renderResources(ch *chart.Chart, values chartutil.Valu
 	}
 	notes := notesBuffer.String()
 
-	// Inject annotations to files by Metadata.Annotations field of chart
-	cfg.injectAnnotations(ch.Metadata.Annotations, files)
-
 	// Sort hooks, manifests, and partials. Only hooks and manifests are returned,
 	// as partials are not used after renderer.Render. Empty manifests are also
 	// removed here.
@@ -235,82 +228,6 @@ func (cfg *Configuration) renderResources(ch *chart.Chart, values chartutil.Valu
 	}
 
 	return hs, b, notes, nil
-}
-
-// injectAnnotations will inject annotations to files
-func (cfg *Configuration) injectAnnotations(originalAnnotations map[string]string, files map[string]string) {
-	if originalAnnotations == nil {
-		return
-	}
-
-	// Hard code, read value from originalAnnotations's key: inject-annotations
-	cur := make(map[string]string)
-	if item, exist := originalAnnotations["inject-annotations"]; exist {
-		if err := json.Unmarshal([]byte(item), &cur); err != nil {
-			cfg.Log("Convert extra item %+v to map[string]string err", item)
-			return
-		}
-	} else {
-		return
-	}
-
-	if len(cur) == 0 {
-		return
-	}
-
-	splitSep := "\n---\n"
-	for name, content := range files {
-		if strings.TrimSpace(content) == "" {
-			continue
-		}
-
-		playloads := strings.Split(strings.TrimSpace(content), splitSep)
-		newContents := make([]string, 0)
-		for _, playload := range playloads {
-			p := strings.TrimSpace(playload)
-			if p == "" {
-				continue
-			}
-
-			// sometimes there may be "\n---" in the playload content
-			strs := strings.Split(p, "\n---")
-			for _, s := range strs {
-				obj := &unstructured.Unstructured{}
-				// decode YAML/JSON into unstructured.Unstructured
-				dec := serializer_yaml.NewDecodingSerializer(unstructured.UnstructuredJSONScheme)
-				_, _, err := dec.Decode([]byte(strings.TrimSpace(s)), nil, obj)
-				if err != nil {
-					cfg.Log("Decode yaml err %s", err.Error())
-					newContents = append(newContents, s)
-					continue
-				}
-
-				annotations := obj.GetAnnotations()
-				if annotations == nil {
-					annotations = make(map[string]string)
-				}
-
-				for k, v := range cur {
-					if _, exist := annotations[k]; !exist {
-						cfg.Log("Inject %s=%s to obj annotations, obj kind: %s, obj name: %s", k, v, obj.GroupVersionKind(), obj.GetName())
-						annotations[k] = v
-					}
-				}
-				obj.SetAnnotations(annotations)
-
-				b, err := yaml.Marshal(obj)
-				if err != nil {
-					cfg.Log("Yaml Marshal err %s", err.Error())
-					newContents = append(newContents, s)
-					continue
-				}
-
-				newContents = append(newContents, string(b))
-			}
-		}
-
-		files[name] = strings.Join(newContents, splitSep)
-	}
 }
 
 // RESTClientGetter gets the rest client
