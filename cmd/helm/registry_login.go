@@ -25,7 +25,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/docker/docker/pkg/term"
+	"github.com/moby/term"
 	"github.com/spf13/cobra"
 
 	"helm.sh/helm/v3/cmd/helm/require"
@@ -67,7 +67,7 @@ func newRegistryLoginCmd(cfg *action.Configuration, out io.Writer) *cobra.Comman
 	return cmd
 }
 
-// Adapted from https://github.com/deislabs/oras
+// Adapted from https://oras.land/oras-go
 func getUsernamePassword(usernameOpt string, passwordOpt string, passwordFromStdinOpt bool) (string, string, error) {
 	var err error
 	username := usernameOpt
@@ -110,7 +110,7 @@ func getUsernamePassword(usernameOpt string, passwordOpt string, passwordFromStd
 	return username, password, nil
 }
 
-// Copied/adapted from https://github.com/deislabs/oras
+// Copied/adapted from https://oras.land/oras-go
 func readLine(prompt string, silent bool) (string, error) {
 	fmt.Print(prompt)
 	if silent {
