@@ -24,7 +24,7 @@ import (
 	"strings"
 	"testing"
 
-	pgperrors "golang.org/x/crypto/openpgp/errors" //nolint
+	pgperrors "github.com/ProtonMail/go-crypto/openpgp/errors"
 )
 
 const (
